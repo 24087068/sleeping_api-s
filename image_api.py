@@ -46,10 +46,21 @@ class ImageAPI:
         return urls
 
     def download_image(self, url, filename):
-        """Download an image to the save folder"""
-        r = requests.get(url)
+        headers = self.headers  # reuse your real UA header
+        r = requests.get(url, headers=headers, allow_redirects=True)
+
+        # Check if we actually downloaded an image
+        content_type = r.headers.get("Content-Type", "")
+
+        if not content_type.startswith("image/"):
+            print(f"Warning: URL returned non-image content: {content_type}")
+            print(f"URL was: {url}")
+            return False
+
         with open(os.path.join(self.save_folder, filename), "wb") as f:
             f.write(r.content)
+
+        return True
 
     def fetch_images_for_models(self, models):
         """Run search and download for a list of models, create csv file for metadata"""
