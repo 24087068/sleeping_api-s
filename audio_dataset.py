@@ -93,6 +93,7 @@ def extract_avg_features(audio_path):
             path = os.path.join(firearm_dir, fname)
             y, sr = librosa.load(path, sr=None, mono=True)
             y_env = np.convolve(np.abs(y), np.ones(2000)/2000, mode='same') # smoothing variable, 25 fitted the best for spotting gunshots
+            
             amp_peaks, _ = find_peaks(
                 y_env,
                 prominence=0.25 * np.max(y_env), # sensitivity variable, 25 fitted the best for spotting gunshots
