@@ -3,7 +3,6 @@ import requests
 import pandas as pd
 import time
 class ImageAPI:
-
     def __init__(self, api_url, headers, save_folder="data/images"):
         self.api_url = api_url
         self.headers = headers

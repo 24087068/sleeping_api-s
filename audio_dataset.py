@@ -46,69 +46,80 @@ def audio_eda(audio_path):
     for firearm in audio_df['firearm'].unique():
         first_path = os.path.join(audio_path, firearm, audio_df[audio_df['firearm'] == firearm]['filename'].iloc[0])
         y, sr = librosa.load(first_path)
-        N = len(y)
         t = np.arange(len(y)) / sr
-        y_abs = np.abs(y)
+
+        # RMS (Loudness) calculation for the loudness feature
+        hop_v = 256 # hop variable, 256 worked best for precision
+        rms = librosa.feature.rms(y=y, frame_length=512, hop_length=hop_v)[0]
+        times_rms = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop_v)
+
         # GenAi, Detecting peaks: https://chatgpt.com/share/6914c756-9450-800a-9dce-4b2c992223bb
-        y_env = np.convolve(y_abs, np.ones(2000) / 2000, mode='same') # smoothing variable, 25 fitted the best for spotting gunshots
         amp_peaks, _ = find_peaks(
-            y_env,
-            prominence=0.25 * np.max(y_env), # sensitivity variable, 25 fitted the best for spotting gunshots
-            distance=int(0.0002 * sr) # interval variable, 0.0005 fitted the best for spotting gunshots
+            rms,
+            prominence=0.3 * np.max(rms), # prominence variable, 0.2 helps ignore the echo/noise
+            height=0.5 * np.max(rms), # sensitivity variable, 0.1 fitted the best for spotting gunshots
+            distance=int((0.05 * sr) / hop_v) # interval variable, 0.08 prevents double counting one shot
         )
+
+        # Mapping peaks back to the main signal
+        peak_indices = (times_rms[amp_peaks] * sr).astype(int)
         plt.figure(figsize=(10, 1))
-        plt.plot(t, y)
-        plt.scatter(t[amp_peaks], y[amp_peaks], color="red")
+        plt.plot(t, y, alpha=0.5)
+        plt.scatter(t[peak_indices], y[peak_indices], color="red")
         plt.title(f"{firearm} Signal Met Mapped Gunshots")
         plt.xlabel("Time (s)")
         plt.ylabel("Amplitude")
         plt.show()
 
-        # FFT magnitude
-        freqs = fftfreq(N, 1 / sr)
-        fft_values = np.abs(fft(y))
-        positive = freqs > 0
+        # Loudness check visualization
         plt.figure(figsize=(10, 1))
-        plt.plot(freqs[positive], fft_values[positive])
-        plt.title(f"{firearm} FFT Spectrum")
-        plt.xlabel("Frequency (Hz)")
-        plt.ylabel("Magnitude")
+        plt.plot(times_rms, rms, color='purple')
+        plt.fill_between(times_rms, rms, color='purple', alpha=0.2)
+        plt.title(f"{firearm} Loudness Feature")
+        plt.xlabel("Time (s)")
+        plt.ylabel("Loudness")
         plt.show()
-
     return audio_df, counts, dur, sfreq, peak_freqs
 
 
 # PREPROCESSING:
 def extract_avg_features(audio_path):
     """
-    Preprocessing: extracts average shots per second (how fast firearm fires) and average peak amplitude per firearm (how lod it is).
+    Preprocessing: extracts average shots per second and average peak amplitude per firearm (how loud it is).
     shots_per_sec are scaled to 1s.
     """
     rows = []
     for firearm in os.listdir(audio_path):
         firearm_dir = os.path.join(audio_path, firearm)
+        if not os.path.isdir(firearm_dir):
+            continue
         shots_list = []
         peak_list = []
         for fname in os.listdir(firearm_dir):
             path = os.path.join(firearm_dir, fname)
             y, sr = librosa.load(path, sr=None, mono=True)
-            y_env = np.convolve(np.abs(y), np.ones(2000)/2000, mode='same') # smoothing variable, 25 fitted the best for spotting gunshots
-            
+
+            # RMS (Loudness) calculation for more stable feature extraction
+            hop_v = 256 # hop variable, 256 worked best for precision
+            rms = librosa.feature.rms(y=y, frame_length=512, hop_length=hop_v)[0]
             amp_peaks, _ = find_peaks(
-                y_env,
-                prominence=0.25 * np.max(y_env), # sensitivity variable, 25 fitted the best for spotting gunshots
-                distance=int(0.0001 * sr) # interval variable, 0.0005 fitted the best for spotting gunshots
+                rms,
+                prominence=0.2 * np.max(rms), # prominence variable, 0.2 helps ignore the echo/noise
+                height=0.1 * np.max(rms),     # sensitivity variable, 0.1 fitted the best for spotting gunshots
+                distance=int((0.08 * sr) / hop_v) # interval variable, 0.08 prevents double counting one shot
             )
             shots = len(amp_peaks)
-            shots_per_sec = shots / 0.5
-            peak_amp = np.max(np.abs(y))
-            shots_list.append(shots_per_sec)
-            peak_list.append(peak_amp)
+            duration = len(y) / sr
+            shots_per_sec = shots / duration
 
+            # Using the max RMS value as the "Loudness" feature
+            peak_loudness = np.max(rms)
+            shots_list.append(shots_per_sec)
+            peak_list.append(peak_loudness)
         rows.append({
             "firearm": firearm,
             "avg_shots_per_sec": np.mean(shots_list),
-            "avg_peak_amplitude": np.mean(peak_list)
+            "avg_loudness_amplitude": np.mean(peak_list)
         })
     df = pd.DataFrame(rows)
     return df
