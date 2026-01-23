@@ -80,3 +80,49 @@ class ImageAPI:
         df = pd.DataFrame(metadata)
         df.to_csv(os.path.join(self.save_folder, "image_metadata.csv"), index=False)
         return df
+def process_weapon_images(raw_base_dir, processed_base_dir):
+    os.makedirs(processed_base_dir, exist_ok=True)
+    data = []
+
+    # Loop through each weapon folder created in Step 1
+    for weapon_name in os.listdir(raw_base_dir):
+        weapon_path = os.path.join(raw_base_dir, weapon_name)
+
+        if os.path.isdir(weapon_path):
+            for img_file in os.listdir(weapon_path):
+                if img_file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    img_path = os.path.join(weapon_path, img_file)
+
+                    try:
+                        # Open image to get dimensions
+                        with Image.open(img_path) as img:
+                            width, height = img.size
+
+                        # FEATURE ENGINEERING: Calculate Aspect Ratio
+                        aspect_ratio = round(width / height, 2)
+
+                        # CLASSIFICATION LOGIC: Based on your friend's 2.0 threshold
+                        if aspect_ratio > 2.0:
+                            handling_type = "2-handed"
+                            has_stock = 1
+                            label_nl = "Lange loop / Kolf"
+                        else:
+                            handling_type = "1-handed"
+                            has_stock = 0
+                            label_nl = "Compact / Handvuurwapen"
+
+                        # Append the extracted features
+                        data.append({
+                            'weapon_key': weapon_name,
+                            'pixel_width': width,
+                            'pixel_height': height,
+                            'aspect_ratio': aspect_ratio,
+                            'handling_type': handling_type,
+                            'has_stock_prediction': has_stock,
+                            'stock_label_nl': label_nl,
+                            'file_path': img_path
+                        })
+                    except Exception as e:
+                        print(f"Error processing {img_file}: {e}")
+
+    return pd.DataFrame(data)
