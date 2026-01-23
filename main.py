@@ -54,3 +54,13 @@ def get_image_api(model, api_url, headers):
         return None
 
     return imginfo[0]["url"]
+
+import pandas as pd
+def merge_features(model_list_df, text_df, audio_df, image_df):
+    final_df = model_list_df.copy()
+    final_df = pd.merge(final_df, text_df, on='model', how='left')
+    final_df = pd.merge(final_df, audio_df, left_on='model', right_on='firearm', how='left')
+    final_df = pd.merge(final_df, image_df, left_on='model', right_on='weapon_key', how='left')
+    cols_to_drop = [c for c in ['firearm', 'weapon_key'] if c in final_df.columns]
+    final_df = final_df.drop(columns=cols_to_drop)
+    return final_df

@@ -1,4 +1,6 @@
 import os
+import shutil
+
 import requests
 import pandas as pd
 import time
@@ -80,49 +82,133 @@ class ImageAPI:
         df = pd.DataFrame(metadata)
         df.to_csv(os.path.join(self.save_folder, "image_metadata.csv"), index=False)
         return df
-def process_weapon_images(raw_base_dir, processed_base_dir):
+import os
+import pandas as pd
+from PIL import Image
+import shutil
+import logging
+import matplotlib.pyplot as plt
+import sqlite3
+
+def organize_images_by_weapon(
+    source_dir="data/images",
+    raw_dir="data/images/raw",
+    extensions=(".jpg", ".jpeg", ".png")
+):
+    """
+    Move/copy images into subfolders per weapon model.
+    data/images/AK47.jpg -> data/images/raw/AK47/AK47.jpg
+    """
+
+    os.makedirs(raw_dir, exist_ok=True)
+    processed = 0
+
+    for img_file in os.listdir(source_dir):
+        if img_file.lower().endswith(extensions):
+            weapon_name = os.path.splitext(img_file)[0]
+            weapon_dir = os.path.join(raw_dir, weapon_name)
+            os.makedirs(weapon_dir, exist_ok=True)
+
+            src = os.path.join(source_dir, img_file)
+            dst = os.path.join(weapon_dir, img_file)
+
+            if os.path.exists(src) and not os.path.exists(dst):
+                shutil.copy(src, dst)
+                processed += 1
+
+    logging.info(f"Organized {processed} images into {raw_dir}")
+# image_api.py
+def process_weapon_images(
+    raw_base_dir="data/images/raw",
+    processed_base_dir="data/images/processed"
+):
+    """
+    Extract basic visual features per weapon image.
+    """
+
     os.makedirs(processed_base_dir, exist_ok=True)
-    data = []
+    records = []
 
-    # Loop through each weapon folder created in Step 1
-    for weapon_name in os.listdir(raw_base_dir):
-        weapon_path = os.path.join(raw_base_dir, weapon_name)
+    for weapon_key in os.listdir(raw_base_dir):
+        weapon_dir = os.path.join(raw_base_dir, weapon_key)
+        if not os.path.isdir(weapon_dir):
+            continue
 
-        if os.path.isdir(weapon_path):
-            for img_file in os.listdir(weapon_path):
-                if img_file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                    img_path = os.path.join(weapon_path, img_file)
+        for img_name in os.listdir(weapon_dir):
+            if not img_name.lower().endswith((".jpg", ".jpeg", ".png")):
+                continue
 
-                    try:
-                        # Open image to get dimensions
-                        with Image.open(img_path) as img:
-                            width, height = img.size
+            img_path = os.path.join(weapon_dir, img_name)
 
-                        # FEATURE ENGINEERING: Calculate Aspect Ratio
-                        aspect_ratio = round(width / height, 2)
+            try:
+                with Image.open(img_path) as img:
+                    width, height = img.size
+                    aspect_ratio = round(width / height, 3)
 
-                        # CLASSIFICATION LOGIC: Based on your friend's 2.0 threshold
-                        if aspect_ratio > 2.0:
-                            handling_type = "2-handed"
-                            has_stock = 1
-                            label_nl = "Lange loop / Kolf"
-                        else:
-                            handling_type = "1-handed"
-                            has_stock = 0
-                            label_nl = "Compact / Handvuurwapen"
+                    # Heuristic rules (same logic as notebook intent)
+                    has_stock_prediction = int(aspect_ratio > 2.0)
+                    handling_type = "2-handed" if has_stock_prediction else "1-handed"
+                    stock_label_nl = "Met kolf" if has_stock_prediction else "Zonder kolf"
 
-                        # Append the extracted features
-                        data.append({
-                            'weapon_key': weapon_name,
-                            'pixel_width': width,
-                            'pixel_height': height,
-                            'aspect_ratio': aspect_ratio,
-                            'handling_type': handling_type,
-                            'has_stock_prediction': has_stock,
-                            'stock_label_nl': label_nl,
-                            'file_path': img_path
-                        })
-                    except Exception as e:
-                        print(f"Error processing {img_file}: {e}")
+                    records.append({
+                        "weapon_key": weapon_key,
+                        "image_name": img_name,
+                        "pixel_width": width,
+                        "pixel_height": height,
+                        "aspect_ratio": aspect_ratio,
+                        "has_stock_prediction": has_stock_prediction,
+                        "handling_type": handling_type,
+                        "stock_label_nl": stock_label_nl
+                    })
 
-    return pd.DataFrame(data)
+            except Exception as e:
+                logging.warning(f"Failed processing {img_path}: {e}")
+
+    return pd.DataFrame(records)
+
+def visualize_image_features(processed_df):
+    """
+    Visualize extracted image features (EDA only).
+    """
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    # Handling type distribution
+    handling_counts = processed_df['handling_type'].value_counts()
+    axes[0, 0].bar(handling_counts.index, handling_counts.values)
+    axes[0, 0].set_title('Handling Type Distribution')
+    axes[0, 0].set_ylabel('Count')
+
+    # Aspect ratio distribution
+    axes[0, 1].hist(processed_df['aspect_ratio'], bins=20, edgecolor='black')
+    axes[0, 1].axvline(2.0, linestyle='--', linewidth=2)
+    axes[0, 1].set_title('Aspect Ratio Distribution')
+
+    # Pixel dimensions
+    axes[1, 0].scatter(
+        processed_df['pixel_width'],
+        processed_df['pixel_height'],
+        c=processed_df['has_stock_prediction'],
+        alpha=0.6
+    )
+    axes[1, 0].set_title('Pixel Dimensions')
+
+    # Handling pie chart
+    stock_dist = processed_df.groupby('handling_type').size()
+    axes[1, 1].pie(stock_dist.values, labels=stock_dist.index, autopct='%1.1f%%')
+    axes[1, 1].set_title('1-handed vs 2-handed')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def save_image_features_to_db(
+    processed_df,
+    db_path="weapons_data.db",
+    table_name="image_features"
+):
+    """
+    Save extracted image features to SQLite.
+    """
+    with sqlite3.connect(db_path) as conn:
+        processed_df.to_sql(table_name, conn, if_exists='replace', index=False)

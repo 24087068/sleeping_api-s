@@ -105,7 +105,7 @@ def extract_avg_features(audio_path):
             amp_peaks, _ = find_peaks(
                 rms,
                 prominence=0.2 * np.max(rms), # prominence variable, 0.2 helps ignore the echo/noise
-                height=0.1 * np.max(rms),     # sensitivity variable, 0.1 fitted the best for spotting gunshots
+                height=0.1 * np.max(rms), # sensitivity variable, 0.1 fitted the best for spotting gunshots
                 distance=int((0.08 * sr) / hop_v) # interval variable, 0.08 prevents double counting one shot
             )
             shots = len(amp_peaks)
