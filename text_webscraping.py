@@ -2,6 +2,8 @@ from bs4 import BeautifulSoup
 import requests
 import pandas as pd
 from urllib.parse import quote
+import re
+
 # test functie with texts from web scraping
 # https://www.crummy.com/software/BeautifulSoup/bs4/doc/
 def get_fandom_text(url):
@@ -61,3 +63,38 @@ def get_fandom_texts(audio_df):
             })
     return pd.DataFrame(results)
 
+def clean_weapon_data(df):
+    def extracts(text):
+        if not text or text in ["Null", "Not found"]:
+            return "Not found", "Not found"
+        text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+        text = re.sub(r'(\d)([A-Z])', r'\1 \2', text)
+        # GenAi, Getting filtering spaces right: https://chatgpt.com/share/69737cb1-59a8-800a-b37a-25b53033de4e
+        type_match = re.search(r'weapon\s*type\s*:?\s*([A-Za-z0-9\s\-\(\),\.]+?)(?=\s*caliber|\s*action|\s*length|$)', text, re.IGNORECASE)
+        w_type = type_match.group(1).strip() if type_match else "Not found"
+        cal_match = re.search(r'caliber\s*:?\s*([\d\.\w\s\-x/]+)', text, re.IGNORECASE)
+        caliber = cal_match.group(1).strip() if cal_match else ""
+        caliber = re.split(r'\s{2,}|(?=[A-Z][a-z])', caliber)[0].strip()
+        return w_type, caliber
+    df[['type', 'caliber']] = df['description_text'].apply(lambda x: pd.Series(extracts(x)))
+    return df[['model', 'type', 'caliber']]
+
+def text_eda(df):
+    print("Top 10 Types")
+    print(df['type'].value_counts().head(10))
+    print("Top 10 Calibers")
+    print(df['caliber'].value_counts().head(10))
+
+def simplify_types(df):
+    def map_category(t):
+        t = str(t).lower()
+        if 'pistol' in t or 'revolver' in t or 'Semi-automatic Pistol(most models)Select-firemachine pistol(Glock 18)' in t:
+            return 'pistol'
+        if 'rifle' in t or 'smg' in t or 'submachine' in t or 'machine gun' in t:
+            return 'rifle'
+        if 'shotgun' in t:
+            return 'shotgun'
+        return 'other'
+    text_features = df.copy()
+    text_features['type'] = df['type'].apply(map_category)
+    return text_features[['model', 'type', 'caliber']]
